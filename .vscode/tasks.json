@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {"label":"HealthLens: API","type":"shell","command":"uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000","isBackground":true,"problemMatcher":[],"presentation":{"panel":"dedicated"}},
+    {"label":"HealthLens: Web","type":"shell","command":"npm --prefix frontend run dev -- --host 127.0.0.1","isBackground":true,"problemMatcher":[],"presentation":{"panel":"dedicated"}},
+    {"label":"HealthLens: Start all","dependsOn":["HealthLens: API","HealthLens: Web"],"dependsOrder":"parallel","problemMatcher":[]},
+    {"label":"HealthLens: Test backend","type":"shell","command":"uv run pytest backend/tests","group":"test","problemMatcher":[]},
+    {"label":"HealthLens: Build web","type":"shell","command":"npm --prefix frontend run build","group":"build","problemMatcher":[]}
+  ]
+}

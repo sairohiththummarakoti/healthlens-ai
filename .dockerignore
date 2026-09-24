@@ -1,0 +1,17 @@
+.git
+.agents
+.specify
+_bmad
+_bmad-output
+.venv
+**/node_modules
+**/dist
+**/__pycache__
+.pytest_cache
+data
+uploads
+.env
+.env.*
+*.log
+test-results
+playwright-report
