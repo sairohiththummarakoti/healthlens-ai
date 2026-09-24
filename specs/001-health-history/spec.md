@@ -146,3 +146,13 @@ A reviewer uploads their own synthetic CSV or JSON records and uses the same ana
 - The source years and counts are derived dynamically; PAT-001 is the fixed acceptance fixture.
 - Structured uploads are local and explicitly user-resettable. Synthetic fixtures require no login.
 - Runtime AI configuration is pending the user's provider/key choice; no secret is assumed.
+# Authorized private hosting extension — 2026-09-24
+
+The user requested hosting through their ChatGPT account. In addition to the local prototype,
+provide an owner-private Site that runs independently of the user's computer. Synthetic uploads,
+patient histories, analyses, charts, evidence, reset and all four agents must work on the Site.
+Durable hosted storage must be scoped to the signed-in user. Local records and secrets must not
+be included in deployment. Calculations, source verification and deterministic explanation labels
+retain the existing semantics. Public sharing and live language-provider integration remain outside
+this extension. Acceptance: upload a valid CSV, reopen the site, analyze persisted records, inspect
+all four completed stages and evidence, ask a follow-up, and reset only the current user's uploads.

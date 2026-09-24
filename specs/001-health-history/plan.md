@@ -45,3 +45,13 @@ uploads; SQLite supplies persistence. Browser graphs consume verified API result
 ## Complexity Tracking
 No constitution violations. Clinical thresholds, authentication, distributed jobs and vector
 search are not needed for the MVP. LLM configuration remains an explicit external dependency.
+# Private Sites deployment extension
+
+Keep the Python/FastAPI local app intact. Deploy a separate `hosted/` Vinext/React application to
+the user's owner-private Sites project. Port the deterministic agent pipeline to TypeScript and
+compare it against Python-generated synthetic golden cases. Use the platform's ChatGPT identity
+for server-side user scoping and D1 for upload/analysis storage. Persist raw provenance separately
+from derived analysis objects, use atomic upload/reset operations, validate all API inputs, and
+reject cross-origin mutations. Preserve the existing dashboard UI and same-origin API contract.
+Verify hosted API behavior, isolation, arithmetic/source tampering checks, reload persistence,
+upload and browser journeys before pushing the exact source and deploying its built artifact.

@@ -67,3 +67,60 @@ from Git. Use README.md and docs/data-sources.md to reproduce the demo and optio
 Next: resolve the user's provider/credential choice, implement T012/T020 with grounded-output
 validation and provider-failure tests, then run Spec Kit convergence again. Until that step,
 describe the result as a deterministic informational prototype, not the final AI-enabled MVP.
+
+## CSV upload and agent visibility repair — 2026-09-24
+
+User-reported inactivity was reproduced with the generated synthetic health-check CSV:
+the API successfully imported 138 observations, but the UI opened the full patient list
+under a generated identifier and required a separate analysis action. The four components
+existed, but their names and activity were not readily visible before running analysis.
+
+Phase 8 tasks T021–T023 address the partial upload/result handoff, agent transparency and
+request-recovery gaps. Single-patient uploads now run analysis automatically; multi-patient
+uploads present only the imported histories with explicit next-step instructions. Selection,
+synthetic-data confirmation, validation, progress and success are visible. Home and activity
+views name Patient History, Trend Analysis, Evidence Verification and Self-Explanation with
+honest Not run states; a prominent dashboard panel preserves actual stage output/timestamps.
+
+Requests are bounded (20 seconds for ordinary API requests, 65 seconds for chat). Uncertain
+upload completion offers a fresh patient-list check. Failed analyses retry the saved patient
+without another upload. Independent review found and corrected stale patient-list overwrites
+and cached-list timeout recovery; browser regressions cover both cases.
+
+Validation after these changes:
+
+- `uv run pytest backend/tests -q` with workspace UV cache: **37 passed**, one existing
+  Starlette/httpx deprecation warning.
+- `npm --prefix frontend run build`: **passed** TypeScript and production compilation.
+- Playwright suite in `tests/e2e/healthlens.spec.ts`: **13 passed in 1.1 minutes**, using the
+  installed CLI and `frontend/playwright.config.ts` with Microsoft Edge.
+- Browser coverage: downloaded example CSV, JSON, invalid-file recovery, real named agent
+  stages/timestamps, multi-patient choice, upload/analysis failures, timeout and lost-response
+  recovery, delayed patient-list race, grounded chat, and 375px layout/keyboard behavior.
+- Manual browser upload of the generated synthetic CSV: **138 observations**, **38 measurement
+  histories**, **38 source-verified findings**, with all four actual stages completed and the
+  results opened automatically. Desktop (1366px) and mobile (375px) layouts visually checked.
+- `git diff --check`: passed. No credentials or generated patient storage are part of the changes.
+
+The local backend was restarted to serve the updated agent names. These fixes are implemented
+locally; they do not close T012/T020. Runtime language-provider integration remains pending,
+and Self-Explanation is still explicitly deterministic. No new live LLM claim is made.
+
+## Private hosting extension — verification
+
+The owner-private Sites edition in `hosted/` preserves the local application while moving its
+API and storage into the hosted runtime. All 20 hosted parity/parser/source-verification/storage
+checks pass. Fifteen browser journeys pass across the full run and focused corrected reruns,
+including authentication, cross-origin rejection, persistence after reload, scoped reset and
+mobile keyboard behavior. The existing Python suite remains 37/37 passing. Source arithmetic
+matches 15 generated Python fixture cases. The hosted edition still labels Self-Explanation as
+deterministic; T012/T020 remain pending. Native WebMCP validation was unavailable; ordinary
+browser operation is verified. Publication rechecks and builds the exact source revision.
+
+Private deployment succeeded on 2026-09-24 at 18:34 UTC:
+https://healthlens-ai.sairohith-thummarako.chatgpt.site
+
+Sites confirmed the owner-private publication of source commit
+`23dbd2dcd046d42b67b33dcb52b303aca2f76bc2` in project
+`appgprj_6ab5662053dc8191a673548541ab8b49` (deployment
+`appgdep_6ab56d1fe5208191b7d09e7f7cad0ee7`). No local patient database was migrated.

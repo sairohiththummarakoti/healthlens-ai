@@ -9,6 +9,10 @@ __pycache__/
 *.egg-info/
 data/
 uploads/
+# The hosted edition has a separately managed Sites source repository.
+/hosted/
+# Generated spreadsheet exports and previews are local artifacts.
+/outputs/
 .env
 .env.*
 !.env.example

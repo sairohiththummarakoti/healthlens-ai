@@ -38,11 +38,20 @@ project skills. `.specify/feature.json` is a per-machine feature pointer and is 
 ## Demonstration
 
 1. Explore the synthetic patients and select PAT-001 (2024–2026).
-2. Analyze its records and inspect the four agents' actual execution log.
+2. Analyze its records and inspect Patient History, Trend Analysis, Evidence Verification,
+   and Self-Explanation in the four-agent panel and actual execution log.
 3. Select LDL: **105 → 118 → 132 mg/dL**, **+27**, **+25.7%**.
 4. Open evidence to inspect the original dated observations.
 5. Ask **What changed the most?**, then **Show me why you said that.**
-6. Download the example CSV or upload synthetic CSV/JSON records.
+6. Download the example CSV or choose/drop a synthetic CSV/JSON file in **Upload records**.
+   Confirm the synthetic-data checkbox and choose **Upload and analyze**. A single-patient
+   file runs the four agents and opens results automatically. For multiple patients, choose
+   one of the imported histories and select **Analyze history**.
+
+The upload dialog shows file selection, validation errors and progress. If the service does
+not confirm an upload within 20 seconds, use **Check imported histories** to refresh the
+patient list before uploading again; the server may already have saved the records. A failed
+analysis can be retried without uploading the same file again.
 
 Calculations are descriptive. A rising or falling value is not automatically better or worse.
 Percentage ranking across measurements is not a ranking of medical importance.
@@ -93,3 +102,12 @@ docker run --rm -p 127.0.0.1:8000:8000 healthlens-ai
 ```
 
 Open http://127.0.0.1:8000. Container storage is ephemeral unless a data volume is supplied.
+
+## Private ChatGPT Site edition
+
+The `hosted/` directory contains an independent private hosted edition. It runs without the local Vite/FastAPI processes, retains the four deterministic agents and source verification, and stores synthetic uploads in a user-scoped hosted database. See `hosted/README.md` and `hosted/VALIDATION.md`. The local application still runs at http://127.0.0.1:5173 while its frontend and backend processes are running.
+
+Open the private hosted application: [HealthLens AI](https://healthlens-ai.sairohith-thummarako.chatgpt.site).
+Sign in with the ChatGPT account that owns the Site. Use the corrected ISO-date CSV for upload;
+local uploads are not automatically transferred. The hosted link remains available without the
+local development servers running.

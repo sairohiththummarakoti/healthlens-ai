@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 
 import pytest
@@ -159,7 +160,36 @@ def test_upload_errors_limits_and_reset(client):
     uploaded = client.post("/api/upload", files={"file": ("sample.csv", sample, "text/csv")})
     assert uploaded.status_code == 200
     patient_id = uploaded.json()["patients"][0]["id"]
-    assert client.post(f"/api/analyze/{patient_id}").status_code == 200
+    started = client.post(f"/api/analyze/{patient_id}")
+    assert started.status_code == 200
+    analysis = client.get(f"/api/analysis/{started.json()['analysis_id']}").json()
+    assert analysis["status"] == "completed"
+    assert [stage["name"] for stage in analysis["stages"]] == [
+        "Patient History Agent", "Trend Analysis Agent", "Evidence Verification Agent", "Self-Explanation Agent",
+    ]
+    previous_completion = datetime.fromisoformat(analysis["created_at"])
+    for stage in analysis["stages"]:
+        assert stage["status"] == "completed"
+        began = datetime.fromisoformat(stage["started_at"])
+        ended = datetime.fromisoformat(stage["completed_at"])
+        assert began.utcoffset() is not None and ended.utcoffset() is not None
+        assert previous_completion <= began <= ended
+        previous_completion = ended
+    assert analysis["stats"] == {
+        "years_analyzed": 3, "measurements_compared": 2, "changes_identified": 2, "findings_verified": 2,
+    }
+    ldl = next(trend for trend in analysis["trends"] if trend["measurement"] == "LDL")
+    assert [record["value"] for record in ldl["observations"]] == [105, 118, 132]
+    assert ldl["absolute_change"] == 27
+    assert ldl["percentage_change"] == pytest.approx(25.71428571428571)
+    assert all(trend["verified"] for trend in analysis["trends"])
+    assert len(analysis["evidence"]) == 2
+    assert all(evidence["verified"] for evidence in analysis["evidence"])
+    assert all(record["source_patient_id"] == "DEMO-UPLOAD"
+               for evidence in analysis["evidence"] for record in evidence["observations"])
+    assert "LDL moved from 105 to 132 mg/dL" in analysis["summary"]
+    assert analysis["explanation_mode"] == "deterministic"
+    assert "no language model was called" in analysis["stages"][-1]["detail"]
     assert client.delete("/api/data").status_code == 200
     assert len(client.get("/api/patients").json()["patients"]) == 3
     assert client.get(f"/api/patients/{patient_id}/records").status_code == 404
