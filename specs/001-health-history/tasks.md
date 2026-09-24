@@ -35,7 +35,7 @@
 - [X] T016 [P] Add reproducible local/Docker instructions and editor handoff in README.md, Dockerfile, .dockerignore and .vscode/tasks.json.
 - [X] T017 Add and run browser journeys in tests/e2e/healthlens.spec.ts; run backend tests and production build.
 - [X] T018 Review requirement coverage and record evidence/remaining work in specs/001-health-history/convergence.md.
-- [ ] T019 Commit reviewed source/specs and push main to the private GitHub repository; verify remote SHA.
+- [X] T019 Commit reviewed source/specs and push main to the private GitHub repository; verify remote SHA.
 
 ## Dependencies & Execution Order
 T001–T002 precede foundation. Backend T003 and frontend T004 can proceed in parallel.
