@@ -12,6 +12,23 @@ const percentage = (value: number | null) => value === null ? 'Not available' : 
 const date = (value: string) => new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 const yearsLabel = (years: number[]) => !years.length ? 'No dated records' : years.length === 1 ? String(years[0]) : `${years[0]}–${years[years.length - 1]}`;
 const modeLabel = (mode: string) => /llm|openai/i.test(mode) && !/unavailable|fallback/i.test(mode) ? `Language model · ${mode}` : 'Deterministic explanation';
+const agents = [
+  { name: 'Patient History Agent', legacy: 'History Agent', icon: Database, description: 'Retrieve dated observations and preserve their original sources.' },
+  { name: 'Trend Analysis Agent', legacy: 'Trend Agent', icon: BarChart3, description: 'Calculate measurement changes and consistency over time.' },
+  { name: 'Evidence Verification Agent', legacy: 'Verification Agent', icon: ShieldCheck, description: 'Check findings against source records and recompute the arithmetic.' },
+  { name: 'Self-Explanation Agent', legacy: 'Explanation Agent', icon: MessageCircle, description: 'Explain verified findings, with the explanation mode clearly labeled.' },
+];
+
+function AgentStages({ analysis, starting = false }: { analysis: Analysis | null; starting?: boolean }) {
+  return <div className="stage-list">{agents.map((agent, index) => {
+    const stage = analysis?.stages.find(item => item.name === agent.name || item.name === agent.legacy);
+    const status = stage?.status ?? (starting ? 'pending' : 'not-run');
+    return <div className={`stage stage-${status}`} key={agent.name}>
+      <div className="stage-icon">{status === 'completed' ? <Check size={16} /> : status === 'running' ? <LoaderCircle size={16} className="spin" /> : status === 'failed' ? <X size={16} /> : <span>{index + 1}</span>}</div>
+      <div><div className="stage-title"><strong>{agent.name}</strong><span>{status === 'not-run' ? 'Not run' : status}</span></div><p>{stage?.detail || agent.description}</p>{stage?.completed_at && <time dateTime={stage.completed_at}>{new Date(stage.completed_at).toLocaleTimeString()}</time>}</div>
+    </div>;
+  })}</div>;
+}
 
 function Modal({ title, subtitle, close, children, wide = false }: { title: string; subtitle?: string; close: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -68,15 +85,28 @@ function App() {
   const [uploadError, setUploadError] = useState('');
   const [resetBusy, setResetBusy] = useState(false);
   const [syntheticConfirmed, setSyntheticConfirmed] = useState(false);
+  const [importedPatientIds, setImportedPatientIds] = useState<string[]>([]);
   const chatBottom = useRef<HTMLDivElement>(null);
   const chatGeneration = useRef(0);
   const activeChatRequest = useRef<{ generation: number; analysisId: string } | null>(null);
   const lastAnalysisPatient = useRef<string | null>(null);
+  const patientsGeneration = useRef(0);
   const currentPatient = patients.find(patient => patient.id === (analysis?.patient_id ?? selectedPatient));
   const completed = analysis?.status === 'completed';
   const processing = starting || (!!job && !['completed', 'failed'].includes(analysis?.status ?? ''));
   const analysisFailed = errorContext === 'analysis' && !!error && !processing;
   const chosenTrend = analysis?.trends.find(trend => trend.measurement === metric) ?? analysis?.trends[0];
+  const selectablePatients = importedPatientIds.length ? patients.filter(patient => importedPatientIds.includes(patient.id)) : patients;
+
+  function openPatients() { setImportedPatientIds([]); setModal('patients'); void loadPatients(); }
+
+  function chooseUpload(file: File | null) {
+    if (uploadBusy) return;
+    setUploadFile(file);
+    setUploadError(!file ? '' : !/\.(csv|json)$/i.test(file.name) ? 'Choose a .csv or .json file.'
+      : file.size === 0 ? 'This file is empty. Choose a CSV or JSON file containing observations.'
+      : file.size > 2 * 1024 * 1024 ? 'This file is larger than 2 MB. Choose a smaller CSV or JSON file.' : '');
+  }
 
   function invalidateConversation() {
     // Pending answers belong to exactly one analysis, even if a later patient reuses a metric.
@@ -86,14 +116,17 @@ function App() {
   }
 
   async function loadPatients() {
+    const generation = ++patientsGeneration.current;
     setPatientsLoading(true);
     try {
       const result = await api.patients();
+      if (generation !== patientsGeneration.current) return;
       setPatients(result.patients);
       setSelectedPatient(previous => result.patients.some(patient => patient.id === previous) ? previous : result.patients[0]?.id ?? '');
       setError('');
-    } catch (error) { setErrorContext('patients'); setError((error as Error).message); }
-    finally { setPatientsLoading(false); }
+    } catch (error) {
+      if (generation === patientsGeneration.current) { setErrorContext('patients'); setError((error as Error).message); }
+    } finally { if (generation === patientsGeneration.current) setPatientsLoading(false); }
   }
 
   useEffect(() => {
@@ -102,6 +135,7 @@ function App() {
     return () => {
       chatGeneration.current += 1;
       activeChatRequest.current = null;
+      patientsGeneration.current += 1;
     };
   }, []);
 
@@ -133,11 +167,11 @@ function App() {
 
   useEffect(() => { if (chat.length) chatBottom.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [chat]);
 
-  async function analyze(patientId = selectedPatient) {
+  async function analyze(patientId = selectedPatient, importNotice = '') {
     if (!patientId || starting) return;
     invalidateConversation();
     lastAnalysisPatient.current = patientId;
-    setStarting(true); setError(''); setNotice(''); setModal(null); setAnalysis(null); setQuery(''); setFilter('All measurements');
+    setStarting(true); setJob(null); setError(''); setNotice(importNotice); setModal(null); setAnalysis(null); setQuery(''); setFilter('All measurements'); setImportedPatientIds([]);
     setSelectedPatient(patientId);
     try { const result = await api.analyze(patientId); setJob(result.analysis_id); }
     catch (error) { setErrorContext('analysis'); setError((error as Error).message); }
@@ -164,14 +198,31 @@ function App() {
 
   async function upload(event: FormEvent) {
     event.preventDefault();
-    if (!uploadFile || !syntheticConfirmed) return;
+    if (uploadBusy || !uploadFile || !syntheticConfirmed) return;
+    if (!/\.(csv|json)$/i.test(uploadFile.name)) { setUploadError('Choose a .csv or .json file.'); return; }
+    if (!uploadFile.size) { setUploadError('This file is empty. Choose a CSV or JSON file containing observations.'); return; }
     if (uploadFile.size > 2 * 1024 * 1024) { setUploadError('This file is larger than 2 MB. Choose a smaller CSV or JSON file.'); return; }
     setUploadBusy(true); setUploadError('');
     try {
       const result = await api.upload(uploadFile);
-      await loadPatients();
-      setSelectedPatient(result.patients[0]?.id ?? '');
-      setNotice(result.message); setModal('patients'); setUploadFile(null); setSyntheticConfirmed(false);
+      if (!result.patients.length) throw new Error('No patient records were imported. Check that the file contains observations.');
+      patientsGeneration.current += 1;
+      setPatientsLoading(false);
+      // The upload response already contains the saved profiles. A second list request must
+      // not hide a successful import or prevent the uploaded records from being analyzed.
+      setPatients(previous => [...result.patients, ...previous.filter(patient => !result.patients.some(imported => imported.id === patient.id))]);
+      setSelectedPatient(result.patients[0].id);
+      const importedCount = result.patients.reduce((total, patient) => total + patient.observation_count, 0);
+      const message = `Imported ${uploadFile.name}: ${importedCount} observations across ${result.patients.length} patient profile(s).`;
+      setUploadFile(null); setSyntheticConfirmed(false);
+      if (result.patients.length === 1) {
+        await analyze(result.patients[0].id, message);
+      } else {
+        invalidateConversation(); setAnalysis(null); setJob(null); setError('');
+        setImportedPatientIds(result.patients.map(patient => patient.id));
+        setNotice(`${message} Select an imported patient below, then choose Analyze history.`);
+        setModal('patients');
+      }
     } catch (error) { setUploadError((error as Error).message); }
     finally { setUploadBusy(false); }
   }
@@ -193,10 +244,7 @@ function App() {
     if (entry) setEvidence(entry);
   }
 
-  const stageList = <div className="stage-list">{analysis?.stages.length ? analysis.stages.map((stage, index) => <div className={`stage stage-${stage.status}`} key={stage.name}>
-    <div className="stage-icon">{stage.status === 'completed' ? <Check size={16} /> : stage.status === 'running' ? <LoaderCircle size={16} className="spin" /> : stage.status === 'failed' ? <X size={16} /> : <span>{index + 1}</span>}</div>
-    <div><div className="stage-title"><strong>{stage.name}</strong><span>{stage.status}</span></div><p>{stage.detail || 'Waiting to run'}</p>{stage.completed_at && <time>{new Date(stage.completed_at).toLocaleTimeString()}</time>}</div>
-  </div>) : <p className="muted">Agent activity appears when an analysis starts.</p>}</div>;
+  const stageList = <AgentStages analysis={analysis} starting={starting} />;
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -204,7 +252,7 @@ function App() {
       <div className="workspace-label">YOUR HEALTH, IN CONTEXT</div>
       <nav aria-label="Main navigation">
         <button className={`nav-item ${!modal ? 'active' : ''}`} onClick={() => setModal(null)}><LayoutDashboard size={19} /> Overview</button>
-        <button className={`nav-item ${modal === 'patients' ? 'active' : ''}`} onClick={() => setModal('patients')} disabled={processing}><Users size={19} /> Patient explorer <span className="nav-count">{patients.length}</span></button>
+        <button className={`nav-item ${modal === 'patients' ? 'active' : ''}`} onClick={openPatients} disabled={processing}><Users size={19} /> Patient explorer <span className="nav-count">{patients.length}</span></button>
         <button className={`nav-item ${modal === 'activity' ? 'active' : ''}`} onClick={() => setModal('activity')}><Activity size={19} /> Agent activity{processing && <span className="live-dot" />}</button>
       </nav>
       <div className="sidebar-note"><div className="note-symbol"><ShieldCheck size={24} /></div><h3>Every insight has a source.</h3><p>Follow each finding back to the records behind it.</p><button onClick={() => setModal('about')}>How HealthLens works <ArrowUpRight size={15} /></button></div>
@@ -214,16 +262,17 @@ function App() {
       <header className="topbar"><div className="breadcrumb">Workspace <span>/</span> <strong>{completed ? 'Health overview' : 'Overview'}</strong></div><div className="topbar-actions"><span className="demo-badge"><span /> Synthetic data demo</span><button className="icon-button" aria-label="About HealthLens" onClick={() => setModal('about')}><CircleHelp size={19} /></button><span className="top-avatar">HL</span></div></header>
       <main id="main-content">
         {error && <div className="banner error-banner" role="alert"><span>{error}</span><button onClick={() => errorContext === 'analysis' ? void analyze(lastAnalysisPatient.current ?? selectedPatient) : errorContext === 'reset' ? void reset() : void loadPatients()}>Retry</button></div>}
-        {notice && <div className="banner notice-banner" role="status"><CheckCheck size={18} /><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss notification"><X size={16} /></button></div>}
+        {notice && !(modal === 'patients' && importedPatientIds.length > 0) && <div className="banner notice-banner" role="status"><CheckCheck size={18} /><span>{notice}</span><button className="icon-button" onClick={() => setNotice('')} aria-label="Dismiss notification"><X size={16} /></button></div>}
         {processing || analysis?.status === 'failed' || analysisFailed ? <section className="processing-view">
           <div className={`processing-symbol ${processing ? 'is-processing' : ''}`}>{processing ? <Activity size={32} /> : <CircleHelp size={32} />}</div>
           <span className="eyebrow">{selectedPatient} · ANALYSIS</span><h1>{processing ? 'Connecting your health history.' : 'Let’s try that again.'}</h1><p>Each step builds on the last. Calculations are checked against the original records before the story is written.</p>
-          <div className="panel processing-panel" aria-live="polite">{starting ? <div className="waiting"><LoaderCircle className="spin" size={22} /> Requesting analysis…</div> : stageList}</div>
+          <div className="panel processing-panel" aria-live="polite">{starting && <div className="waiting" role="status"><LoaderCircle className="spin" size={22} /> Requesting analysis…</div>}{stageList}</div>
           {(analysis?.status === 'failed' || analysisFailed) && <button className="button primary" onClick={() => void analyze(lastAnalysisPatient.current ?? selectedPatient)}>Retry analysis <ArrowRight size={17} /></button>}
           <span className="processing-footnote"><ShieldCheck size={15} /> Status reflects actual agent execution</span>
         </section> : completed && analysis ? <>
-          <section className="page-heading"><div><span className="eyebrow">THE BIG PICTURE</span><h1>Your health, over time<span className="heading-dot">.</span></h1><p>A clearer view of what changed, what stayed steady, and why.</p></div><button className="patient-switcher" onClick={() => setModal('patients')}><span className="patient-mini"><Users size={18} /></span><span><small>Selected patient</small><strong>{analysis.patient_id}</strong></span><ChevronDown size={17} /></button></section>
+          <section className="page-heading"><div><span className="eyebrow">THE BIG PICTURE</span><h1>Your health, over time<span className="heading-dot">.</span></h1><p>A clearer view of what changed, what stayed steady, and why.</p></div><button className="patient-switcher" onClick={openPatients}><span className="patient-mini"><Users size={18} /></span><span><small>Selected patient</small><strong>{analysis.patient_id}</strong></span><ChevronDown size={17} /></button></section>
           <div className="context-row"><span><span className="live-dot" /> Analysis complete</span><span><Database size={14} /> {currentPatient?.source ?? 'Local source'}</span><span>{yearsLabel(analysis.years)}</span><button onClick={() => { setUploadError(''); setModal('upload'); }}><Plus size={15} /> Add records</button></div>
+          <section className="panel agent-overview" aria-label="Four-agent analysis"><div className="section-heading"><div><span className="eyebrow">HOW THESE RESULTS WERE BUILT</span><h2>Your four agents</h2></div><button className="text-button" onClick={() => setModal('activity')}>View full activity <ArrowRight size={15} /></button></div><p className="section-description">Actual execution for this patient · {modeLabel(analysis.explanation_mode)}</p>{stageList}</section>
           <section className="stats-grid" aria-label="Analysis totals">{[
             { label: 'Years of history', value: analysis.stats.years_analyzed, icon: BookOpen, caption: yearsLabel(analysis.years) },
             { label: 'Measurements', value: analysis.stats.measurements_compared, icon: BarChart3, caption: 'Compared across records' },
@@ -251,35 +300,33 @@ function App() {
               {chat.map((entry, index) => <div className="chat-entry" key={`${index}-${entry.question}`}><p className="question-bubble">{entry.question}</p><div className="answer-bubble"><span className="answer-label"><Sparkles size={13} /> HEALTHLENS</span><p>{entry.response.answer}</p><span className="answer-mode">{modeLabel(entry.response.explanation_mode)}</span>{entry.response.evidence.length > 0 && <div className="chat-evidence">{entry.response.evidence.map(item => <button onClick={() => setEvidence(item)} key={item.id}><ShieldCheck size={12} /> {item.measurement}<ArrowUpRight size={12} /></button>)}</div>}<details className="chat-agents"><summary>Agents used ({entry.response.agents_used.length})</summary><p>{entry.response.agents_used.join(' → ')}</p></details></div></div>)}
               {chatBusy && <div className="chat-loading" role="status"><LoaderCircle className="spin" size={15} /> Checking the verified record…</div>}{chatError && <div className="inline-error" role="alert">{chatError}</div>}<div ref={chatBottom} />
             </div><form className="chat-form" onSubmit={event => { event.preventDefault(); void ask(question); }}><label className="sr-only" htmlFor="question">Ask a question about these records</label><textarea id="question" placeholder="Ask about these records…" rows={2} maxLength={2000} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void ask(question); } }} /><button aria-label="Send question" disabled={chatBusy || !question.trim()}><Send size={17} /></button></form><p className="chat-footnote">Grounded in records. For understanding, not diagnosis.</p></section>
-            <section className="panel activity-panel"><div className="section-heading"><h2>Behind the insights</h2><span className="activity-dot" /></div><p className="section-description">A transparent, four-agent workflow.</p>{stageList}<button className="activity-link" onClick={() => setModal('activity')}>View full activity <ArrowRight size={15} /></button></section>
+
           </aside></div>
         </> : <>
           <section className="home-heading"><span className="eyebrow">WELCOME TO HEALTHLENS</span><div className="home-topline"><h1>A little perspective.<br />A clearer health story<span className="heading-dot">.</span></h1><span className="edition">HEALTH HISTORY<br />MEETS UNDERSTANDING</span></div></section>
-          <section className="welcome-card"><div className="welcome-copy"><span className="pill-label"><span className="live-dot" /> EVIDENCE FIRST. ALWAYS.</span><h2>Your records have a story.<br /><em>Let’s connect the dots.</em></h2><p>Explore years of health measurements in one thoughtful view. See what changed, ask better questions, and trace every insight to its source.</p><div className="hero-actions"><button className="button primary" onClick={() => setModal('patients')} disabled={patientsLoading}><span>{patientsLoading ? 'Loading patients…' : 'Explore Sample Patient'}</span>{patientsLoading ? <LoaderCircle size={18} className="spin" /> : <ArrowRight size={18} />}</button><button className="button outline" onClick={() => { setUploadError(''); setModal('upload'); }}><Upload size={17} /> Upload records</button></div><div className="welcome-caption"><ShieldCheck size={15} /> Anonymous synthetic records. No sign-in needed.</div></div><div className="welcome-art" aria-hidden="true"><div className="orbital orbital-one" /><div className="orbital orbital-two" /><div className="art-line line-one" /><div className="art-line line-two" /><div className="art-card art-record"><span className="art-icon"><FileText size={22} /></span><strong>The records</strong><span>Your history, together</span><div className="mock-line" /><div className="mock-line short" /></div><div className="art-lens"><HeartPulse size={42} strokeWidth={1.3} /><span>HealthLens</span></div><div className="art-card art-insight"><span className="art-check"><ShieldCheck size={18} /> Verified understanding</span><strong>A clearer perspective</strong><svg viewBox="0 0 220 60"><path d="M0 48 Q32 52 55 32 T110 34 T165 18 T220 8" fill="none" stroke="#409184" strokeWidth="3" /><circle cx="55" cy="32" r="4" fill="#d6eeb3" stroke="#409184" strokeWidth="2"/><circle cx="165" cy="18" r="4" fill="#d6eeb3" stroke="#409184" strokeWidth="2"/></svg></div><span className="art-caption">FROM INFORMATION TO UNDERSTANDING</span></div></section>
-          <section className="how-section"><div className="section-heading"><div><span className="eyebrow">THOUGHTFULLY CONNECTED</span><h2>Four agents. One trustworthy picture.</h2></div><span className="section-description">Transparent at every step.</span></div><div className="how-grid">{[
-            { icon: Database, title: 'Gather the history', text: 'Bring dated observations together, with their original sources.', step: '01' },
-            { icon: BarChart3, title: 'Find the patterns', text: 'Calculate changes and consistency across the available years.', step: '02' },
-            { icon: ShieldCheck, title: 'Verify the evidence', text: 'Check findings against the underlying values and arithmetic.', step: '03' },
-            { icon: MessageCircle, title: 'Tell the story', text: 'Turn verified findings into a clear, grounded explanation.', step: '04' },
-          ].map(item => <article className="how-card" key={item.step}><div><span className="how-icon"><item.icon size={21} /></span><span className="step-number">{item.step}</span></div><h3>{item.title}</h3><p>{item.text}</p></article>)}</div></section>
-          <section className="sample-strip"><div><span className="sample-icon"><Users size={22} /></span><div><h3>A safe place to explore</h3><p>{patients.length ? `${patients.length} anonymous patient profiles are ready to explore.` : 'Start with anonymous sample records when the service is ready.'} Built for learning, using synthetic data.</p></div></div><button className="text-button" onClick={() => setModal('patients')}>Meet the sample patients <ArrowRight size={16} /></button></section>
+          <section className="welcome-card"><div className="welcome-copy"><span className="pill-label"><span className="live-dot" /> EVIDENCE FIRST. ALWAYS.</span><h2>Your records have a story.<br /><em>Let’s connect the dots.</em></h2><p>Explore years of health measurements in one thoughtful view. See what changed, ask better questions, and trace every insight to its source.</p><div className="hero-actions"><button className="button primary" onClick={openPatients} disabled={patientsLoading}><span>{patientsLoading ? 'Loading patients…' : 'Explore Sample Patient'}</span>{patientsLoading ? <LoaderCircle size={18} className="spin" /> : <ArrowRight size={18} />}</button><button className="button outline" onClick={() => { setUploadError(''); setModal('upload'); }}><Upload size={17} /> Upload records</button></div><div className="welcome-caption"><ShieldCheck size={15} /> Anonymous synthetic records. No sign-in needed.</div></div><div className="welcome-art" aria-hidden="true"><div className="orbital orbital-one" /><div className="orbital orbital-two" /><div className="art-line line-one" /><div className="art-line line-two" /><div className="art-card art-record"><span className="art-icon"><FileText size={22} /></span><strong>The records</strong><span>Your history, together</span><div className="mock-line" /><div className="mock-line short" /></div><div className="art-lens"><HeartPulse size={42} strokeWidth={1.3} /><span>HealthLens</span></div><div className="art-card art-insight"><span className="art-check"><ShieldCheck size={18} /> Verified understanding</span><strong>A clearer perspective</strong><svg viewBox="0 0 220 60"><path d="M0 48 Q32 52 55 32 T110 34 T165 18 T220 8" fill="none" stroke="#409184" strokeWidth="3" /><circle cx="55" cy="32" r="4" fill="#d6eeb3" stroke="#409184" strokeWidth="2"/><circle cx="165" cy="18" r="4" fill="#d6eeb3" stroke="#409184" strokeWidth="2"/></svg></div><span className="art-caption">FROM INFORMATION TO UNDERSTANDING</span></div></section>
+          <section className="how-section"><div className="section-heading"><div><span className="eyebrow">THOUGHTFULLY CONNECTED</span><h2>Four agents. One trustworthy picture.</h2></div><span className="section-description">Transparent at every step.</span></div><div className="how-grid">{agents.map((agent, index) => <article className="how-card" key={agent.name}><div><span className="how-icon"><agent.icon size={21} /></span><span className="step-number">{String(index + 1).padStart(2, '0')}</span></div><h3>{agent.name}</h3><span className="agent-idle">Not run</span><p>{agent.description}</p></article>)}</div></section>
+          <section className="sample-strip"><div><span className="sample-icon"><Users size={22} /></span><div><h3>A safe place to explore</h3><p>{patients.length ? `${patients.length} anonymous patient profiles are ready to explore.` : 'Start with anonymous sample records when the service is ready.'} Built for learning, using synthetic data.</p></div></div><button className="text-button" onClick={openPatients}>Meet the sample patients <ArrowRight size={16} /></button></section>
         </>}
         <footer className="page-footer"><ShieldCheck size={17} /><p>{disclaimer}</p><span>HEALTHLENS AI</span></footer>
       </main>
     </div>
 
-    {modal === 'patients' && <Modal title="Choose a patient history" subtitle="Anonymous demonstration records, ready to explore." close={() => setModal(null)}>
-      {patientsLoading ? <div className="empty-state"><LoaderCircle size={20} className="spin" /> Loading patients…</div> : !patients.length ? <div className="empty-state">No patient records are available. Start the local service or upload synthetic records.</div> : <div className="patient-list">{patients.map(patient => <label className={`patient-option ${selectedPatient === patient.id ? 'chosen' : ''}`} key={patient.id}><input type="radio" name="patient" value={patient.id} checked={selectedPatient === patient.id} onChange={() => setSelectedPatient(patient.id)} /><span className="patient-option-icon"><Users size={20} /></span><span className="patient-option-info"><strong>{patient.id}</strong><span>{yearsLabel(patient.years)} · {patient.observation_count} observations</span><small>{patient.source}</small>{patient.source_url && <a href={patient.source_url} target="_blank" rel="noreferrer">View dataset source</a>}</span><span className="radio-indicator">{selectedPatient === patient.id && <Check size={13} />}</span></label>)}</div>}
+    {modal === 'patients' && <Modal title="Choose a patient history" subtitle={importedPatientIds.length ? 'Choose which imported history to analyze. Each patient is analyzed separately.' : 'Anonymous demonstration records, ready to explore.'} close={() => setModal(null)}>
+      {importedPatientIds.length > 0 && notice && <div className="banner notice-banner" role="status"><CheckCheck size={18} /><span>{notice}</span></div>}
+      {patientsLoading ? <div className="empty-state"><LoaderCircle size={20} className="spin" /> Loading patients…</div> : !selectablePatients.length ? <div className="empty-state">No patient records are available. Start the local service or upload synthetic records.</div> : <div className="patient-list">{selectablePatients.map(patient => <label className={`patient-option ${selectedPatient === patient.id ? 'chosen' : ''}`} key={patient.id}><input type="radio" name="patient" value={patient.id} checked={selectedPatient === patient.id} onChange={() => setSelectedPatient(patient.id)} /><span className="patient-option-icon"><Users size={20} /></span><span className="patient-option-info"><strong>{patient.id}</strong><span>{yearsLabel(patient.years)} · {patient.observation_count} observations</span><small>{patient.source}</small>{patient.source_url && <a href={patient.source_url} target="_blank" rel="noreferrer">View dataset source</a>}</span><span className="radio-indicator">{selectedPatient === patient.id && <Check size={13} />}</span></label>)}</div>}
+      {importedPatientIds.length > 0 && <button className="text-button all-patients" onClick={() => setImportedPatientIds([])}>Show all patient histories</button>}
       <div className="modal-actions"><button className="button outline" onClick={() => { setUploadError(''); setModal('upload'); }}><Upload size={16} /> Upload records</button><button className="button primary" disabled={!selectedPatient || processing || patientsLoading} onClick={() => void analyze()}>Analyze history <ArrowRight size={16} /></button></div><p className="modal-note">Records are synthetic. Trends describe recorded changes, not medical conclusions.</p>
     </Modal>}
-    {modal === 'upload' && <Modal title="Bring a history into focus" subtitle="Upload synthetic CSV or JSON records to explore with HealthLens." close={() => { if (!uploadBusy) setModal(null); }}>
-      <form onSubmit={event => void upload(event)}><label className="upload-zone"><Upload size={28} /><strong>{uploadFile?.name ?? 'Choose a CSV or JSON file'}</strong><span>{uploadFile ? `${(uploadFile.size / 1024).toFixed(1)} KB · Click to choose another file` : 'Up to 2 MB · Maximum 10,000 observations'}</span><input type="file" accept=".csv,.json,text/csv,application/json" aria-label="Choose records file" onChange={event => { setUploadFile(event.target.files?.[0] ?? null); setUploadError(''); }} /></label>
+    {modal === 'upload' && <Modal title="Bring a history into focus" subtitle="Choose a file, confirm it contains synthetic data, then upload to run the four agents." close={() => { if (!uploadBusy) setModal(null); }}>
+      <form onSubmit={event => void upload(event)} aria-busy={uploadBusy}><label className="upload-zone" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); if (event.dataTransfer.files.length > 1) setUploadError('Choose one CSV or JSON file at a time.'); else chooseUpload(event.dataTransfer.files[0] ?? null); }}><Upload size={28} /><strong>{uploadFile?.name ?? 'Choose or drop a CSV or JSON file'}</strong><span>{uploadFile ? `${(uploadFile.size / 1024).toFixed(1)} KB · Click to choose another file` : 'Up to 2 MB · Maximum 10,000 observations'}</span><input type="file" accept=".csv,.json,text/csv,application/json" aria-label="Choose records file" disabled={uploadBusy} onChange={event => chooseUpload(event.target.files?.[0] ?? null)} /></label>
+        <p className="upload-progress" role="status">{uploadBusy ? 'Validating and saving your records… The four agents will run next.' : !uploadFile ? 'Step 1 of 3: Choose a CSV or JSON file.' : !syntheticConfirmed ? 'Step 2 of 3: File selected. Confirm the synthetic-data checkbox below to continue.' : 'Step 3 of 3: Ready. Choose Upload and analyze to see your results.'}</p>
         <div className="schema-help"><div><FileJson size={17} /><strong>One observation per row or JSON object</strong></div><p>Required fields: <code>patient_id</code>, <code>date</code> (YYYY-MM-DD), <code>measurement</code>, <code>value</code> (number), <code>unit</code>. Optional: <code>reference_range</code>.</p><pre>{'[{"patient_id":"DEMO-001","date":"2024-01-15",\n  "measurement":"LDL","value":105,"unit":"mg/dL"}]'}</pre><a className="text-button" href="/api/sample.csv" download><Download size={15} /> Download example CSV</a></div>
-        <label className="checkbox-label"><input type="checkbox" checked={syntheticConfirmed} onChange={event => setSyntheticConfirmed(event.target.checked)} /><span>These are synthetic demonstration records and contain no real patient information.</span></label>{uploadError && <p className="inline-error" role="alert">{uploadError}</p>}<div className="modal-actions"><button type="button" className="button outline" onClick={() => setModal(null)} disabled={uploadBusy}>Cancel</button><button className="button primary" disabled={!uploadFile || !syntheticConfirmed || uploadBusy}>{uploadBusy ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}{uploadBusy ? 'Validating records…' : 'Upload and validate'}</button></div>
+        <label className="checkbox-label"><input type="checkbox" checked={syntheticConfirmed} disabled={uploadBusy} onChange={event => setSyntheticConfirmed(event.target.checked)} /><span>These are synthetic demonstration records and contain no real patient information.</span></label>{uploadError && <p className="inline-error" role="alert">{uploadError}</p>}{uploadError.includes('timed out') && <button type="button" className="text-button all-patients" onClick={openPatients}>Check imported histories <ArrowRight size={15} /></button>}<div className="modal-actions"><button type="button" className="button outline" onClick={() => setModal(null)} disabled={uploadBusy}>Cancel</button><button className="button primary" disabled={!uploadFile || !syntheticConfirmed || uploadBusy}>{uploadBusy ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}{uploadBusy ? 'Validating records…' : 'Upload and analyze'}</button></div>
       </form>
     </Modal>}
-    {modal === 'activity' && <Modal title="A transparent path to every insight" subtitle={analysis ? `${analysis.patient_id} · ${analysis.status}` : 'Run a patient analysis to see actual agent activity.'} close={() => setModal(null)}>{stageList}<div className="mode-note"><Sparkles size={17} /><div><strong>{modeLabel(analysis?.explanation_mode ?? explanationMode)}</strong><p>Calculations and source verification are deterministic. Language output is labeled with the mode actually used.</p></div></div></Modal>}
-    {modal === 'about' && <Modal title="Understanding, grounded in evidence" subtitle="HealthLens AI · Informational research prototype" close={() => setModal(null)}><div className="about-content"><p>HealthLens brings dated measurements into one view. A history agent retrieves records, a trend agent calculates changes, a verification agent checks the source, and an explanation agent describes verified findings.</p><p>“Increasing,” “decreasing,” and “stable” are descriptions of the numbers. They do not imply medical improvement or decline. Relative change rankings do not measure medical importance.</p><div className="mode-note"><ShieldCheck size={22} /><p>Bundled profiles are synthetic fixtures. Uploaded records retain their stated source. HealthLens runs as a local, single-user prototype.</p></div><p>{disclaimer}</p><button className="text-button" disabled={processing} onClick={() => setModal('reset')}><Trash2 size={14} /> Reset local data</button></div></Modal>}
+    {modal === 'activity' && <Modal title="A transparent path to every insight" subtitle={analysis ? `${analysis.patient_id} · ${analysis.status}` : 'These four agents are ready. Select a patient or upload records to run them.'} close={() => setModal(null)}>{stageList}<div className="mode-note"><Sparkles size={17} /><div><strong>{modeLabel(analysis?.explanation_mode ?? explanationMode)}</strong><p>Calculations and source verification are deterministic. Self-Explanation currently uses a labeled template; no language model is connected.</p></div></div></Modal>}
+    {modal === 'about' && <Modal title="Understanding, grounded in evidence" subtitle="HealthLens AI · Informational research prototype" close={() => setModal(null)}><div className="about-content"><p>HealthLens brings dated measurements into one view. The Patient History Agent retrieves records, the Trend Analysis Agent calculates changes, the Evidence Verification Agent checks sources, and the Self-Explanation Agent describes verified findings.</p><p>“Increasing,” “decreasing,” and “stable” are descriptions of the numbers. They do not imply medical improvement or decline. Relative change rankings do not measure medical importance.</p><div className="mode-note"><ShieldCheck size={22} /><p>Bundled profiles are synthetic fixtures. Uploaded records retain their stated source. HealthLens runs as a local, single-user prototype.</p></div><p>{disclaimer}</p><button className="text-button" disabled={processing} onClick={() => setModal('reset')}><Trash2 size={14} /> Reset local data</button></div></Modal>}
     {modal === 'reset' && <Modal title="Reset local data?" subtitle="Start with a clean research workspace." close={() => { if (!resetBusy) setModal(null); }}><p className="reset-description">This deletes uploaded records, saved analyses, and the current conversation. The built-in synthetic patients remain available. This action cannot be undone.</p><div className="modal-actions"><button className="button outline" onClick={() => setModal(null)} disabled={resetBusy}>Keep my data</button><button className="button danger" onClick={() => void reset()} disabled={resetBusy}>{resetBusy ? <LoaderCircle size={16} className="spin" /> : <Trash2 size={16} />} Reset local data</button></div></Modal>}
     {evidence && <Modal title={`${evidence.measurement} · Source evidence`} subtitle="Follow the finding back to the original observations." close={() => setEvidence(null)} wide><div className={`evidence-status ${evidence.verified ? '' : 'unverified'}`}><ShieldCheck size={20} /><div><strong>{evidence.verified ? 'Verified against original records' : 'Verification not passed'}</strong><p>{evidence.claim}</p></div></div><div className="evidence-table-wrap"><table className="evidence-table"><caption>Original observations · source values and units preserved</caption><thead><tr><th>Date</th><th>Value</th><th>Unit</th><th>Source record</th></tr></thead><tbody>{evidence.observations.map(item => <tr key={item.id}><td>{date(item.date)}</td><td><strong>{number(item.value)}</strong>{item.reference_range && <small>Source range: {item.reference_range}</small>}</td><td>{item.unit}</td><td><code>{item.id}</code><small>{item.source}</small></td></tr>)}</tbody></table></div><div className="calculation"><span className="eyebrow">CHECK THE MATH</span><p>{evidence.calculation}</p></div>{evidence.verification_notes.length > 0 && <ul className="verification-notes">{evidence.verification_notes.map((note, index) => <li key={index}><Check size={14} />{note}</li>)}</ul>}<p className="modal-note">Source evidence supports a descriptive change. It does not establish a diagnosis or treatment recommendation.</p></Modal>}
   </div>;

@@ -11,7 +11,7 @@ from uuid import uuid4
 from .seed import METRICS
 
 DISCLAIMER = "HealthLens AI is an informational prototype and does not provide medical diagnosis or treatment advice. Discuss health concerns with a qualified healthcare professional."
-AGENT_NAMES = ["History Agent", "Trend Agent", "Verification Agent", "Explanation Agent"]
+AGENT_NAMES = ["Patient History Agent", "Trend Analysis Agent", "Evidence Verification Agent", "Self-Explanation Agent"]
 ALIASES = {
     "ldl cholesterol": "LDL", "ldl c": "LDL", "low density lipoprotein": "LDL",
     "hdl cholesterol": "HDL", "hdl c": "HDL", "high density lipoprotein": "HDL",

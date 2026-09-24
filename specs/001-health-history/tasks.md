@@ -55,3 +55,13 @@ selected provider after its setup decision. Run Spec Kit convergence and remedy 
 
 ## Phase 7: Convergence
 - [ ] T020 Complete and verify the runtime language-provider integration in backend/app/explanation.py after the user's secure provider/credential choice; send only verified evidence, reject unsupported numerical claims, test unavailable-provider fallback and safety, and measure the configured-AI latency per FR-011, SC-001, US2/AC4 and T012 (partial).
+
+## Phase 8: Convergence
+- [X] T021 Make structured uploads lead clearly to results in frontend/src/App.tsx: automatically analyze a single imported patient, explicitly select among multiple imported patients, expose file/consent/validation/success states, and verify downloaded CSV and JSON journeys in tests/e2e/healthlens.spec.ts per FR-001, FR-009, FR-014, US3/AC1 and SC-004 (partial).
+- [X] T022 Display Patient History, Trend Analysis, Evidence Verification and Self-Explanation agents with honest pre-run and actual execution states on home, processing, dashboard and activity views; align backend names and regress real timestamped completion per Constitution III, FR-006, FR-008 and US1/AC2 (partial).
+- [X] T023 Bound frontend requests and provide actionable service/timeout errors with analysis retry and upload recovery; verify pending, failed and offline states per FR-014 and failed-job edge case (partial).
+## Private hosting extension
+- [X] T024 Port and verify deterministic agents in hosted/lib against the local Python implementation; preserve source verification and explanation labels.
+- [X] T025 Implement signed-in, user-scoped durable D1 uploads, analyses, chat, reset and validation in hosted/app/api and hosted/lib.
+- [X] T026 Reuse and verify the dashboard, four-agent views, uploads and evidence on hosted preview; check build, data persistence and isolation.
+- [X] T027 Push the reviewed hosted source and deploy the built version to the user's owner-private Sites project; record deployment result and instructions.
